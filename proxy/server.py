@@ -330,7 +330,16 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "GatewayWebProxy/1.0"
 
     def log_message(self, fmt, *args):  # quieter logs
-        sys.stderr.write("[proxy] %s\n" % (fmt % args))
+        # In a frozen --windowed build (no console) sys.stderr is None; writing
+        # to it would raise and every response would be dropped before it is
+        # sent, so the browser would show nothing.  Fall back to nowhere.
+        stream = sys.stderr
+        if stream is None:
+            return
+        try:
+            stream.write("[proxy] %s\n" % (fmt % args))
+        except Exception:
+            pass
 
     # ---- CORS ----
     def _cors(self):

@@ -8,6 +8,7 @@
 #      python3 build.py                 # build for this OS
 #      python3 build.py --name Foo      # custom binary name
 #      python3 build.py --console       # keep a console (debug)
+#      python3 build.py --no-icon       # build without an application icon
 #
 #  Requires:  pip install pyinstaller
 #
@@ -22,6 +23,15 @@ import shutil
 import subprocess
 import tempfile
 
+# Redirected stdout/stderr on Windows can default to cp1252, which cannot
+# encode the arrow in the "Done ->" banner.  Force UTF-8 so the build never
+# crashes at the final print (and the exit code stays 0).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))      # gateway/
 GATEWAY = os.path.dirname(HERE)                        # repo gateway/
 DIST = os.path.join(GATEWAY, "dist")
@@ -29,13 +39,43 @@ BUILD = os.path.join(GATEWAY, "build", "pyinstaller")
 
 APPS = ["index.html", "styles.css", "data.js", "app.js"]
 
+# The icons are generated with the standard library (app/make_icon.py) so the
+# build stays dependency-free; regenerate them if they are missing.
+ICONS = ("icon.png", "icon.ico")
+
+
+def ensure_icons():
+    """Create the icon files on demand. Returns True when they exist."""
+    if all(os.path.isfile(os.path.join(GATEWAY, f)) for f in ICONS):
+        return True
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import make_icon
+        make_icon.main()
+    except Exception as e:
+        print("Could not generate icons: %s" % e)
+    return all(os.path.isfile(os.path.join(GATEWAY, f)) for f in ICONS)
+
+
+def pick_icon():
+    """Return the icon file appropriate for this OS, or None."""
+    if os.name == "nt":
+        ico = os.path.join(GATEWAY, "icon.ico")           # Windows needs .ico
+    elif sys.platform == "darwin":
+        ico = os.path.join(GATEWAY, "icon.icns")          # macOS needs .icns
+    else:
+        ico = os.path.join(GATEWAY, "icon.png")           # Linux takes .png
+    return ico if os.path.isfile(ico) else None
+
 
 def main():
     args = sys.argv[1:]
-    name = "MarshallCODE-Gateway"
+    name = "Code Gateway"
     if "--name" in args:
         name = args[args.index("--name") + 1]
     console = "--console" in args
+    want_icon = "--no-icon" not in args
 
     try:
         import PyInstaller.__main__ as pyi
@@ -68,11 +108,12 @@ def main():
         cmd += ["--add-data", d]
     if not console:
         cmd += ["--windowed"]
-    if os.name != "nt" and sys.platform != "darwin":
-        # icon is optional; skip when absent
-        ico = os.path.join(GATEWAY, "icon.png")
-        if os.path.isfile(ico):
-            cmd += ["--icon", ico]
+    if want_icon and ensure_icons():
+        icon = pick_icon()
+        if icon:
+            cmd += ["--icon", icon]
+        elif sys.platform == "darwin":
+            print("No icon.icns present; building without an icon.")
 
     print("Building %s ..." % name)
     pyi.run(cmd)

@@ -348,6 +348,8 @@ function onMessage(m){
   if (type === 0xB0){ handleIncomingCC(data[1], data[2]); }
 }
 function handleIncomingCC(cc, val){
+  // The amp reports its tuner button (CC 52) so the UI follows the panel combo.
+  if (cc === TUNER_CC){ setTuner(val > 0); return; }
   // find any control mapped to this CC and reflect it
   const rev = {}; Object.entries(state.cc).forEach(([k,v])=> rev[v]=k);
   const key = rev[cc]; if(!key) return;
@@ -1153,7 +1155,15 @@ async function doLogout(){
   state.login.ok=false; setCloudStatus(); toast("Signed out");
 }
 
-/* ---------------- TUNER ---------------- */
+/* ---------------- TUNER ----------------
+   Marshall CODE tuner protocol (recovered from the hardware / working editors):
+   * CC 52 = 1 engages the amp's built-in tuner, CC 52 = 0 leaves it. The amp also
+     *sends* CC 52 (1/0) when its tuner is toggled from the panel, so we follow the
+     button combo instead of asking the user to press it.
+   * while the tuner is engaged the amp streams the detected note as Polyphonic
+     Key Pressure (status 0xA0): data1 = MIDI note number, data2 = accuracy
+     0..4 (0 = very flat, 2 = in tune, 4 = very sharp). */
+const TUNER_CC = 52;
 let tunerOn = false;
 const tunerNotes = [];
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
@@ -1161,33 +1171,63 @@ function renderTunerHistory(){
   const el = $("#tunerHistory"); if (!el) return;
   el.innerHTML = tunerNotes.map((n,i)=>`<span class="tnote${i===0?" now":""}">${escapeHtml(n)}</span>`).join("");
 }
-function toggleTuner(){
-  tunerOn = !tunerOn;
-  $("#tunerToggle").textContent = tunerOn ? "Stop tuner" : "Start tuner";
+function resetTunerReadout(){
+  const n=$("#tunerNote"), o=$("#tunerOctave"), mk=$("#tunerMark"), h=$("#tunerHint");
+  if (n) n.textContent="–";
+  if (o) o.textContent="";
+  if (mk){ mk.style.left="50%"; mk.className="tuner-mark"; }
+  if (h) h.textContent="—";
+  tunerNotes.length = 0; renderTunerHistory();
+}
+function setTuner(on){
+  tunerOn = !!on;
+  const btn = $("#tunerToggle");
+  if (btn) btn.textContent = tunerOn ? "Stop tuner" : "Start tuner";
   const st = $("#tunerStatus");
   if (st){ st.textContent = tunerOn ? "listening" : "idle"; st.classList.toggle("ok", tunerOn); st.classList.toggle("bad", false); }
-  // Ask the amp to enter tuner mode via the documented button combo equivalent is not exposed over CC;
-  // tuner notes are transmitted while the amp's tuner is engaged. We still request note data listening.
-  if (tunerOn){ toast("Tuner listening — engage TUNER on the amp (PRE FX + AMP)."); switchView("tuner"); }
-  else {
-    $("#tunerNote").textContent="–"; $("#tunerOctave").textContent=""; $("#tunerMark").style.left="50%"; $("#tunerHint").textContent="—";
-    tunerNotes.length = 0; renderTunerHistory();
+  const src = $("#tunerSource");
+  if (src) src.textContent = tunerOn ? "Amp tuner engaged — play a string" : "Listening on the selected MIDI input";
+  if (!tunerOn) resetTunerReadout();
+}
+function sendRawCC(cc, val, {silent=false}={}){
+  // Send a control change by number (used for controls outside the editable CC map).
+  if (!out) return;
+  send([0xB0 | (state.settings.channel & 0x0F), clamp(cc,0,127), clamp(Math.round(val),0,127)], {silent});
+}
+function toggleTuner(){
+  const next = !tunerOn;
+  setTuner(next);
+  if (!out){
+    toast("Connect to the amp first — then the tuner can be switched on.");
+  } else {
+    // Ask the amp to enter/leave its built-in tuner.
+    sendRawCC(TUNER_CC, next ? 1 : 0);
+    if (next) toast("Tuner on — the amp's tuner is engaged.");
   }
+  if (next) switchView("tuner");
+}
+function updateTunerDisplay(note, accuracy){
+  if (!(note >= 0 && note <= 127)) return;
+  const name = NOTE_NAMES[note % 12], oct = Math.floor(note/12) - 1;
+  const nEl=$("#tunerNote"), oEl=$("#tunerOctave"), mk=$("#tunerMark"), h=$("#tunerHint");
+  if (nEl) nEl.textContent = name;
+  if (oEl) oEl.textContent = "octave " + oct;
+  const acc = clamp(accuracy|0, 0, 4);
+  if (mk){
+    // 0..4 maps to 8%..92% across the needle; 2 is dead centre.
+    mk.style.left = (50 + (acc - 2) * 21) + "%";
+    mk.className = "tuner-mark" + (acc === 2 ? "" : " off");
+  }
+  if (h) h.textContent = name + oct + " — " + (acc === 2 ? "in tune" : (acc < 2 ? "flat" : "sharp"));
+  tunerNotes.unshift(name + oct);
+  tunerNotes.length = Math.min(tunerNotes.length, 6);
+  renderTunerHistory();
 }
 function onTunerMIDI(data){
   if (!tunerOn) return false;
-  const status = data[0];
-  if ((status & 0xF0) === 0x90 && data[2] > 0){
-    const n = data[1];
-    const pc = n % 12, oct = Math.floor(n/12) - 1;
-    const note = NOTE_NAMES[pc];
-    $("#tunerNote").textContent = note;
-    $("#tunerOctave").textContent = "octave " + oct;
-    $("#tunerMark").style.left = "50%";
-    $("#tunerHint").textContent = "Detected " + note + oct;
-    tunerNotes.unshift(note + oct);
-    tunerNotes.length = Math.min(tunerNotes.length, 6);
-    renderTunerHistory();
+  // Tuning data arrives as Polyphonic Key Pressure, not note-on.
+  if ((data[0] & 0xF0) === 0xA0){
+    updateTunerDisplay(data[1], data[2]);
     return true;
   }
   return false;

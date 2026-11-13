@@ -38,10 +38,10 @@ executable**. The recipient needs no Python, no terminal and no install:
 ```bash
 cd gateway
 python3 -m pip install pyinstaller     # build machine only, once
-python3 app/build.py                   # → gateway/dist/MarshallCODE-Gateway
+python3 app/build.py                   # → gateway/dist/Code Gateway.exe (etc.)
 ```
 
-Double-clicking `MarshallCODE-Gateway` opens a small native window, picks a free
+Double-clicking `Code Gateway` opens a small native window, picks a free
 port, starts the helper and opens the app in the default browser. Close the window
 to quit. Copy that single file anywhere (USB stick, another PC with the same OS) and
 it just runs.
@@ -122,9 +122,11 @@ one line: `python3 /path/to/gateway/app/desktop.py`.
   - **Toggle Marshall library** — add/remove it in your Marshall account library.
 
 ### Other
-- **Tuner** view — large note readout with octave, a flat/sharp needle, a tuning
-  status pill and a rolling history of the notes it hears (the amp emits note data
-  while its tuner is engaged).
+- **Tuner** — **Start tuner** sends CC 52 to switch the amp's built-in tuner on (its
+  panel button combo works too, and the app follows it); the amp then streams the
+  note as Polyphonic Key Pressure and the view shows a large note readout with
+  octave, a flat/sharp needle driven by the amp's 5-step accuracy, a tuning status
+  pill and a rolling history of the notes it hears.
 - **MIDI Monitor** — every byte in and out, colour-coded, with a **Hex / Decoded**
   toggle (CC messages resolve to their mapped control name), a **direction filter**
   (All / In / Out), a live text filter, an **Auto-scroll** toggle, **Pause/Resume**
@@ -211,7 +213,10 @@ gateway/
 ├── proxy/server.py   static server + Cloud reverse proxy + sign-in bridge
 ├── app/desktop.py    double-click launcher (native window + browser)
 ├── app/build.py      PyInstaller one-file builder
-├── dist/             built executable (after running build.py)
+├── app/make_icon.py  generates icon.png / icon.ico (standard library only)
+├── icon.png          source icon (generated)
+├── icon.ico          Windows icon, embedded into the exe (generated)
+├── dist/             built "Code Gateway" executable (after running build.py)
 └── README.md
 ```
 
